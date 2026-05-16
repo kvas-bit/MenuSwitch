@@ -22,13 +22,14 @@ final class MenuSwitchAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 980, height: 760)
+        popover.contentSize = size(for: viewModel.page)
         popover.contentViewController = NSHostingController(
             rootView: MenuSwitchView(
                 viewModel: viewModel,
                 onRevealSettings: { [weak self] in self?.appSettingsStore.revealSettingsFile() },
                 onRevealFolder: { [weak self] in self?.claudeStore.revealClaudeFolder() },
-                onQuit: { NSApp.terminate(nil) }
+                onQuit: { NSApp.terminate(nil) },
+                onPageChange: { [weak self] page in self?.popover.contentSize = self?.size(for: page) ?? .zero }
             )
         )
 
@@ -51,5 +52,14 @@ final class MenuSwitchAppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    private func size(for page: MenuSwitchPage) -> NSSize {
+        switch page {
+        case .switcher:
+            return NSSize(width: 680, height: 460)
+        case .settings:
+            return NSSize(width: 1120, height: 780)
+        }
     }
 }

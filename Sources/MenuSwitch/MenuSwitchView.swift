@@ -6,6 +6,16 @@ struct MenuSwitchView: View {
     let onRevealSettings: () -> Void
     let onRevealFolder: () -> Void
     let onQuit: () -> Void
+    let onPageChange: (MenuSwitchPage) -> Void
+
+    private var pageSize: CGSize {
+        switch viewModel.page {
+        case .switcher:
+            return CGSize(width: 680, height: 460)
+        case .settings:
+            return CGSize(width: 1120, height: 780)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,10 +29,11 @@ struct MenuSwitchView: View {
                 settingsPage
             }
         }
-        .frame(width: 980, height: 760)
+        .frame(width: pageSize.width, height: pageSize.height)
         .background(Color(nsColor: .windowBackgroundColor))
         .animation(.snappy(duration: 0.2), value: viewModel.page)
-        .animation(.snappy(duration: 0.2), value: viewModel.settings.profiles.count)
+        .onAppear { onPageChange(viewModel.page) }
+        .onChange(of: viewModel.page) { onPageChange($0) }
     }
 
     private var topBar: some View {
@@ -31,7 +42,7 @@ struct MenuSwitchView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("MenuSwitch")
                         .font(.system(size: 22, weight: .semibold))
-                    Text("Choose a configured model, or edit the full profile settings below.")
+                    Text("Switch configured models quickly. Edit the full profile settings in the other page.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -58,11 +69,8 @@ struct MenuSwitchView: View {
 
                 Spacer()
 
-                Button("Open settings") {
-                    viewModel.page = .settings
-                }
                 Button("Reveal settings file") { onRevealSettings() }
-                Button("Open folder") { onRevealFolder() }
+                Button("Open Claude folder") { onRevealFolder() }
                 Button("Quit") { onQuit() }
             }
         }
@@ -71,47 +79,116 @@ struct MenuSwitchView: View {
 
     private var switcherPage: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                summaryCard
+            VStack(alignment: .leading, spacing: 14) {
+                SummaryCard(
+                    title: viewModel.activeProfileLabel,
+                    subtitle: viewModel.settingsSummary,
+                    note: "Only enabled profiles appear here. Claude models are hidden because Claude Code already includes them."
+                )
 
                 if viewModel.switcherEmptyState {
                     EmptyState(
                         title: "No enabled models",
-                        message: "Open Settings and enable at least one profile to make the switch page useful."
+                        message: "Open the Settings page, enable a profile, and save changes to populate this page."
                     )
                 } else {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    LazyVStack(spacing: 10) {
                         ForEach(viewModel.enabledProfiles) { profile in
-                            SwitchCard(profile: profile, isActive: viewModel.currentProfile?.id == profile.id) {
-                                viewModel.apply(profile: profile)
-                            } onSelect: {
-                                viewModel.selectProfile(profile)
-                            }
+                            SwitchRow(
+                                profile: profile,
+                                isActive: viewModel.currentProfile?.id == profile.id,
+                                onSelect: {
+                                    viewModel.selectProfile(profile)
+                                },
+                                onSwitch: {
+                                    viewModel.apply(profile: profile)
+                                }
+                            )
                         }
                     }
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    private var settingsPage: some View {
+        NavigationSplitView {
+            List(selection: selectedProfileSelectionBinding) {
+                Section("Configured profiles") {
+                    ForEach(viewModel.configuredProfiles) { profile in
+                        SettingsSidebarRow(profile: profile)
+                            .tag(profile.id as String?)
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Button("Add custom model") {
+                        viewModel.addCustomProfile()
+                    }
+                    Button("Restore defaults") {
+                        viewModel.restoreDefaults()
+                    }
+                    Button("Save settings") {
+                        viewModel.saveSettings()
+                    }
+                }
+                .buttonStyle(.borderless)
+                .padding(12)
+            }
+            .frame(minWidth: 280)
+        } detail: {
+            VStack(alignment: .leading, spacing: 16) {
+                settingsHeader
+
+                if let binding = selectedProfileEditorBinding {
+                    ProfileForm(
+                        profile: binding,
+                        keyDraft: viewModel.keyBinding(for: binding.wrappedValue.id),
+                        storedKeyStatus: viewModel.storedKeyStatus(for: binding.wrappedValue.id),
+                        onSaveKey: {
+                            viewModel.saveKey(for: binding.wrappedValue.id, key: viewModel.keyDrafts[binding.wrappedValue.id, default: ""])
+                        },
+                        onClearKey: {
+                            viewModel.clearKey(for: binding.wrappedValue.id)
+                        },
+                        onApply: {
+                            viewModel.apply(profile: binding.wrappedValue)
+                        },
+                        onDelete: {
+                            viewModel.removeProfile(id: binding.wrappedValue.id)
+                        }
+                    )
+                } else {
+                    EmptyState(
+                        title: "Select a profile",
+                        message: "Choose a configured model from the sidebar to edit its full endpoint, notes, and Keychain-backed key."
+                    )
                 }
             }
             .padding(18)
         }
     }
 
-    private var summaryCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private var settingsHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(viewModel.activeProfileLabel)
+                    Text("Settings")
                         .font(.system(size: 18, weight: .semibold))
-                    Text(viewModel.settingsSummary)
+                    Text("Apple-style split editor: pick a profile on the left, then edit the full configuration on the right.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Badge(text: "Claude models hidden", isProminent: true)
+                Badge(text: "Form-based editor", isProminent: true)
             }
 
-            Text("The switch page only shows profiles you configured in Settings.")
+            Text("Claude models are intentionally hidden here because they are already available in Claude Code.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         }
@@ -126,70 +203,47 @@ struct MenuSwitchView: View {
         )
     }
 
-    private var settingsPage: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                settingsHeader
-
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach($viewModel.settings.profiles) { $profile in
-                        ProfileEditorCard(
-                            profile: $profile,
-                            keyDraft: viewModel.keyBinding(for: profile.id),
-                            storedKeyStatus: viewModel.storedKeyStatus(for: profile.id),
-                            onSaveKey: {
-                                viewModel.saveKey(for: profile.id, key: viewModel.keyDrafts[profile.id, default: ""])
-                            },
-                            onClearKey: {
-                                viewModel.clearKey(for: profile.id)
-                            },
-                            onApply: {
-                                viewModel.apply(profile: profile)
-                            },
-                            onDelete: {
-                                viewModel.removeProfile(id: profile.id)
-                            }
-                        )
-                    }
-                }
-            }
-            .padding(18)
-        }
+    private var selectedProfileSelectionBinding: Binding<String?> {
+        Binding(
+            get: { viewModel.settings.selectedProfileID },
+            set: { viewModel.settings.selectedProfileID = $0 }
+        )
     }
 
-    private var settingsHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
+    private var selectedProfileEditorBinding: Binding<MenuSwitchProfile>? {
+        guard let selectedID = viewModel.settings.selectedProfileID,
+              let index = viewModel.settings.profiles.firstIndex(where: { $0.id == selectedID }) else {
+            return nil
+        }
+        return $viewModel.settings.profiles[index]
+    }
+}
+
+private struct SummaryCard: View {
+    let title: String
+    let subtitle: String
+    let note: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Settings")
+                    Text(title)
                         .font(.system(size: 18, weight: .semibold))
-                    Text("Edit the model name, endpoint, notes, and Keychain-backed API key for each profile.")
+                    Text(subtitle)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Badge(text: "Form-based editor", isProminent: true)
+                Badge(text: "Switch page", isProminent: true)
             }
 
-            HStack(spacing: 8) {
-                Button("Add custom model") {
-                    viewModel.addCustomProfile()
-                }
-                Button("Restore defaults") {
-                    viewModel.restoreDefaults()
-                }
-                Button("Save settings") {
-                    viewModel.saveSettings()
-                }
-
-                Spacer()
-
-                Text("Claude models are hidden because Claude Code already provides them.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
+            Text(note)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
         .background(
@@ -203,52 +257,44 @@ struct MenuSwitchView: View {
     }
 }
 
-private struct SwitchCard: View {
+private struct SwitchRow: View {
     let profile: MenuSwitchProfile
     let isActive: Bool
-    let onSwitch: () -> Void
     let onSelect: () -> Void
+    let onSwitch: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(profile.name)
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(profile.provider)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Badge(text: profile.requiresEndpoint ? "Gateway" : "Direct", isProminent: profile.enabled)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(profile.name)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(profile.provider)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text(profile.modelID)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(profile.notes)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
 
-            Text(profile.modelID)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            Spacer(minLength: 10)
 
-            Text(profile.notes)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
+            VStack(alignment: .trailing, spacing: 8) {
+                Badge(text: profile.requiresEndpoint ? "Gateway" : "Direct", isProminent: profile.enabled)
 
-            HStack(spacing: 8) {
-                Button("Select") {
-                    onSelect()
-                }
+                HStack(spacing: 8) {
+                    Button("Details") {
+                        onSelect()
+                    }
 
-                Button("Switch now") {
-                    onSwitch()
-                }
-                .keyboardShortcut(.defaultAction)
-
-                Spacer()
-
-                if isActive {
-                    Badge(text: "Active", isProminent: true)
+                    Button("Switch now") {
+                        onSwitch()
+                    }
+                    .keyboardShortcut(.defaultAction)
                 }
             }
         }
@@ -265,7 +311,35 @@ private struct SwitchCard: View {
     }
 }
 
-private struct ProfileEditorCard: View {
+private struct SettingsSidebarRow: View {
+    let profile: MenuSwitchProfile
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(profile.name)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(profile.provider)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Text(profile.modelID)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 6)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Badge(text: profile.enabled ? "On" : "Off", isProminent: profile.enabled)
+                Badge(text: profile.requiresEndpoint ? "Gateway" : "Direct", isProminent: false)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct ProfileForm: View {
     @Binding var profile: MenuSwitchProfile
     let keyDraft: Binding<String>
     let storedKeyStatus: String
@@ -275,62 +349,44 @@ private struct ProfileEditorCard: View {
     let onDelete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
-                HStack(spacing: 12) {
-                    LabeledField(label: "Display name", helpText: "Shown on the switch page.", text: $profile.name, placeholder: "DeepSeek V4 Pro")
-                    LabeledField(label: "Provider", helpText: "Shown beside the model name.", text: $profile.provider, placeholder: "DeepSeek")
-                }
-
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 6) {
-                    Toggle(isOn: $profile.enabled) {
-                        Text("Enabled")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .toggleStyle(.switch)
-
-                    Badge(text: profile.requiresEndpoint ? "Gateway" : "Direct", isProminent: profile.enabled)
-                }
+        Form {
+            Section {
+                Toggle("Enabled on Switch page", isOn: $profile.enabled)
+                LabeledField(label: "Display name", helpText: "Shown on the switch page.", text: $profile.name, placeholder: "Qwen 3.6 Plus")
+                LabeledField(label: "Provider", helpText: "Shown as the source label.", text: $profile.provider, placeholder: "Qwen")
+                LabeledField(label: "Model ID", helpText: "The exact model string Claude Code should send.", text: $profile.modelID, placeholder: "qwen3.6-plus")
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                LabeledField(label: "Model ID", helpText: "This is the exact model string Claude Code will use.", text: $profile.modelID, placeholder: "qwen3.6-plus")
-                LabeledField(label: "Endpoint or gateway URL", helpText: profile.requiresEndpoint ? "Required for this profile." : "Optional for direct endpoints.", text: $profile.endpoint, placeholder: "https://your-gateway.example.com/anthropic")
-                LabeledField(label: "Docs URL", helpText: "Used for the help link on this card.", text: $profile.docsURL, placeholder: "https://example.com/docs")
-                LabeledTextEditor(label: "Notes", helpText: "Short setup notes for this profile.", text: $profile.notes)
+            Section {
+                LabeledField(label: "Endpoint or gateway URL", helpText: profile.requiresEndpoint ? "Required for this profile." : "Optional for direct provider endpoints.", text: $profile.endpoint, placeholder: "https://your-gateway.example.com/anthropic")
+                LabeledField(label: "Docs URL", helpText: "Where the model setup reference lives.", text: $profile.docsURL, placeholder: "https://example.com/docs")
+                LabeledTextEditor(label: "Notes", helpText: "Short notes that explain how to use this profile.", text: $profile.notes)
             }
 
-            HStack(spacing: 8) {
-                SecureInput(label: "API key", helpText: storedKeyStatus, text: keyDraft, placeholder: "Paste a key to save it in Keychain")
+            Section {
+                HStack(alignment: .top, spacing: 12) {
+                    SecureInput(label: "API key", helpText: storedKeyStatus, text: keyDraft, placeholder: "Paste a key to save it in Keychain")
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Button("Save Key") {
-                        onSaveKey()
-                    }
-                    Button("Clear Key") {
-                        onClearKey()
-                    }
-                    Button("Apply Now") {
-                        onApply()
-                    }
-                    Button("Delete") {
-                        onDelete()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button("Save Key") {
+                            onSaveKey()
+                        }
+                        Button("Clear Key") {
+                            onClearKey()
+                        }
+                        Button("Apply Now") {
+                            onApply()
+                        }
+                        Button(role: .destructive) {
+                            onDelete()
+                        } label: {
+                            Text("Delete profile")
+                        }
                     }
                 }
-                .buttonStyle(.borderless)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        .formStyle(.grouped)
     }
 }
 
@@ -367,7 +423,7 @@ private struct LabeledTextEditor: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             TextEditor(text: $text)
-                .frame(minHeight: 86)
+                .frame(minHeight: 84)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
