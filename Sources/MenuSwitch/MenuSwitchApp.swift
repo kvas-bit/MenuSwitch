@@ -19,9 +19,10 @@ final class MenuSwitchAppDelegate: NSObject, NSApplicationDelegate {
     private lazy var viewModel = MenuSwitchViewModel(settingsStore: appSettingsStore, claudeStore: claudeStore)
     private let popover = NSPopover()
     private var statusItem: NSStatusItem!
+    private var eventMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        popover.behavior = .transient
+        popover.behavior = .applicationDefined
         popover.contentSize = size(for: viewModel.page)
         popover.contentViewController = NSHostingController(
             rootView: MenuSwitchView(
@@ -45,21 +46,34 @@ final class MenuSwitchAppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePopover(_ sender: Any?) {
         if popover.isShown {
-            popover.performClose(sender)
+            closePopover()
             return
         }
 
         guard let button = statusItem.button else { return }
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
+
+        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.closePopover()
+        }
+    }
+
+    private func closePopover() {
+        popover.performClose(nil)
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
+        }
     }
 
     private func size(for page: MenuSwitchPage) -> NSSize {
         switch page {
         case .switcher:
-            return NSSize(width: 680, height: 460)
+            return NSSize(width: 560, height: 460)
         case .settings:
-            return NSSize(width: 1120, height: 780)
+            return NSSize(width: 900, height: 700)
         }
     }
 }

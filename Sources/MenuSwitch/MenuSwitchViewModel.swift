@@ -9,6 +9,13 @@ enum MenuSwitchPage: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum MenuSwitchEnvironmentScope: String, CaseIterable, Identifiable {
+    case alias = "Claude aliases"
+    case runtime = "Runtime overrides"
+
+    var id: String { rawValue }
+}
+
 @MainActor
 final class MenuSwitchViewModel: ObservableObject {
     @Published var page: MenuSwitchPage = .switcher
@@ -16,6 +23,7 @@ final class MenuSwitchViewModel: ObservableObject {
     @Published var statusText: String
     @Published var lastErrorMessage: String?
     @Published var keyDrafts: [String: String] = [:]
+    @Published var draggedProfileID: String?
 
     private let settingsStore: MenuSwitchSettingsStore
     private let claudeStore: ClaudeCodeSettingsStore
@@ -24,24 +32,23 @@ final class MenuSwitchViewModel: ObservableObject {
         self.settingsStore = settingsStore
         self.claudeStore = claudeStore
 
-        var loadedSettings = (try? settingsStore.load()) ?? MenuSwitchAppSettings(
+        let loaded = (try? settingsStore.load()) ?? MenuSwitchAppSettings(
             profiles: ModelTemplateCatalog.seedProfiles(),
             selectedProfileID: ModelTemplateCatalog.seedProfiles().first(where: { $0.enabled })?.id
         )
-        if loadedSettings.selectedProfileID == nil {
-            loadedSettings.selectedProfileID = loadedSettings.profiles.first(where: { $0.enabled })?.id
+
+        var seeded = loaded
+        if seeded.selectedProfileID == nil {
+            seeded.selectedProfileID = seeded.profiles.first(where: { $0.enabled })?.id
         }
 
-        self.settings = loadedSettings
-        self.statusText = loadedSettings.selectedProfileID == nil ? "Add or enable a model in Settings." : "Ready to switch models."
-        self.lastErrorMessage = nil
-        self.keyDrafts = [:]
+        settings = seeded
+        statusText = seeded.selectedProfileID == nil ? "Add or enable a model in Settings." : "Ready to switch models."
+        lastErrorMessage = nil
     }
 
     var enabledProfiles: [MenuSwitchProfile] {
-        settings.profiles
-            .filter(\.enabled)
-            .sorted { $0.sortOrder < $1.sortOrder }
+        settings.profiles.filter(\.enabled).sorted { $0.sortOrder < $1.sortOrder }
     }
 
     var configuredProfiles: [MenuSwitchProfile] {
@@ -50,8 +57,8 @@ final class MenuSwitchViewModel: ObservableObject {
 
     var currentProfile: MenuSwitchProfile? {
         if let selected = settings.selectedProfileID,
-           let match = settings.profiles.first(where: { $0.id == selected }) {
-            return match
+           let profile = settings.profiles.first(where: { $0.id == selected }) {
+            return profile
         }
         return enabledProfiles.first
     }
@@ -61,7 +68,7 @@ final class MenuSwitchViewModel: ObservableObject {
     }
 
     var activeProfileSubtitle: String {
-        currentProfile.map { "\($0.provider) · \($0.modelID)" } ?? "Open Settings to configure a model."
+        currentProfile.map { "\($0.provider) · \($0.modelID)" } ?? "Open Settings to configure a profile."
     }
 
     var switcherEmptyState: Bool {
@@ -69,11 +76,12 @@ final class MenuSwitchViewModel: ObservableObject {
     }
 
     var settingsSummary: String {
-        "\(settings.profiles.count) configured models"
+        "\(settings.profiles.count) configured profiles"
     }
 
     func selectProfile(_ profile: MenuSwitchProfile) {
         settings.selectedProfileID = profile.id
+        persistSettingsIfPossible()
         statusText = "Selected \(profile.name)."
         lastErrorMessage = nil
     }
@@ -105,18 +113,47 @@ final class MenuSwitchViewModel: ObservableObject {
         }
     }
 
+    func resetClaudeCodeSettings() {
+        do {
+            try claudeStore.resetToClaudeDefaults()
+            statusText = "Restored Claude Code defaults."
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
     func restoreDefaults() {
         do {
             settings = try settingsStore.resetToDefaults()
             keyDrafts.removeAll()
-            statusText = "Restored default provider models."
+            statusText = "Restored default provider profiles."
             lastErrorMessage = nil
-            if settings.selectedProfileID == nil {
-                settings.selectedProfileID = enabledProfiles.first?.id
-            }
         } catch {
             lastErrorMessage = error.localizedDescription
         }
+    }
+
+    func addProfile(from template: MenuSwitchTemplate) {
+        let newProfile = MenuSwitchProfile(
+            id: UUID().uuidString,
+            name: "\(template.name) (copy)",
+            provider: template.provider,
+            modelID: template.modelID,
+            endpoint: template.endpoint,
+            notes: template.notes,
+            docsURL: template.docsURL,
+            enabled: true,
+            requiresEndpoint: template.requiresEndpoint,
+            templateID: nil,
+            sortOrder: (settings.profiles.map(\.sortOrder).max() ?? 0) + 10,
+            aliasEnvironment: template.aliasEnvironment,
+            extraEnvironment: template.extraEnvironment
+        )
+        settings.profiles.append(newProfile)
+        settings.selectedProfileID = newProfile.id
+        persistSettingsIfPossible()
+        statusText = "Added profile from \(template.name) template."
     }
 
     func addCustomProfile() {
@@ -127,17 +164,28 @@ final class MenuSwitchViewModel: ObservableObject {
             modelID: "",
             endpoint: "",
             notes: "Paste any Anthropic-compatible model and endpoint here.",
-            docsURL: ModelTemplateCatalog.qwenDocsURL,
+            docsURL: "",
             enabled: true,
             requiresEndpoint: true,
             templateID: nil,
             sortOrder: (settings.profiles.map(\.sortOrder).max() ?? 0) + 10,
-            aliasEnvironment: [:],
-            extraEnvironment: [:]
+            aliasEnvironment: [
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": ""
+            ],
+            extraEnvironment: [
+                "CLAUDE_CODE_SUBAGENT_MODEL": "",
+                "CLAUDE_CODE_EFFORT_LEVEL": "",
+                "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "",
+                "ENABLE_TOOL_SEARCH": ""
+            ]
         )
         settings.profiles.append(newProfile)
         settings.selectedProfileID = newProfile.id
-        statusText = "Added a custom model."
+        keyDrafts[newProfile.id] = ""
+        persistSettingsIfPossible()
+        statusText = "Added a custom profile."
     }
 
     func removeProfile(id: String) {
@@ -149,14 +197,52 @@ final class MenuSwitchViewModel: ObservableObject {
         if let removed = settings.profiles.first(where: { $0.id == id }) {
             try? KeychainVault.delete(account: removed.keychainAccount)
         }
+
         settings.profiles.removeAll { $0.id == id }
         keyDrafts[id] = nil
 
         if settings.selectedProfileID == id {
-            settings.selectedProfileID = enabledProfiles.first?.id ?? settings.profiles.first?.id
+            settings.selectedProfileID = settings.profiles.first(where: { $0.enabled })?.id ?? settings.profiles.first?.id
         }
 
+        normalizeSortOrder()
+        persistSettingsIfPossible()
         statusText = "Removed a profile."
+        lastErrorMessage = nil
+    }
+
+    func moveProfile(from sourceID: String, before targetID: String) {
+        guard sourceID != targetID,
+              let sourceIndex = settings.profiles.firstIndex(where: { $0.id == sourceID }),
+              let targetIndex = settings.profiles.firstIndex(where: { $0.id == targetID }) else {
+            return
+        }
+
+        let profile = settings.profiles.remove(at: sourceIndex)
+        var insertionIndex = targetIndex
+        if sourceIndex < targetIndex {
+            insertionIndex -= 1
+        }
+        insertionIndex = max(0, min(insertionIndex, settings.profiles.count))
+        settings.profiles.insert(profile, at: insertionIndex)
+        normalizeSortOrder()
+        persistSettingsIfPossible()
+        statusText = "Reordered profiles."
+    }
+
+    func setEnabled(_ enabled: Bool, for profileID: String) {
+        updateProfile(id: profileID) { profile in
+            profile.enabled = enabled
+        }
+
+        if !enabled, settings.selectedProfileID == profileID {
+            settings.selectedProfileID = settings.profiles.first(where: { $0.enabled })?.id ?? settings.profiles.first?.id
+        } else if enabled, settings.selectedProfileID == nil {
+            settings.selectedProfileID = profileID
+        }
+
+        persistSettingsIfPossible()
+        statusText = enabled ? "Enabled profile." : "Disabled profile."
     }
 
     func saveKey(for profileID: String, key: String) {
@@ -204,6 +290,10 @@ final class MenuSwitchViewModel: ObservableObject {
         return (try? KeychainVault.load(account: profile.keychainAccount)) != nil
     }
 
+    func storedKeyStatus(for profileID: String) -> String {
+        hasStoredKey(for: profileID) ? "Saved in Keychain" : "No saved key"
+    }
+
     func keyBinding(for profileID: String) -> Binding<String> {
         Binding(
             get: { [weak self] in
@@ -215,8 +305,52 @@ final class MenuSwitchViewModel: ObservableObject {
         )
     }
 
-    func storedKeyStatus(for profileID: String) -> String {
-        hasStoredKey(for: profileID) ? "Saved in Keychain" : "No saved key"
+    func profileBinding(for profileID: String) -> Binding<MenuSwitchProfile>? {
+        guard let index = settings.profiles.firstIndex(where: { $0.id == profileID }) else {
+            return nil
+        }
+
+        return Binding(
+            get: {
+                self.settings.profiles[index]
+            },
+            set: { newValue in
+                self.settings.profiles[index] = newValue
+            }
+        )
+    }
+
+    func environmentBinding(profileID: String, key: String, scope: MenuSwitchEnvironmentScope) -> Binding<String> {
+        Binding(
+            get: {
+                self.environmentValue(profileID: profileID, key: key, scope: scope)
+            },
+            set: { newValue in
+                self.setEnvironmentValue(profileID: profileID, key: key, scope: scope, value: newValue)
+            }
+        )
+    }
+
+    func setEnvironmentValue(profileID: String, key: String, scope: MenuSwitchEnvironmentScope, value: String) {
+        updateProfile(id: profileID) { profile in
+            switch scope {
+            case .alias:
+                profile.aliasEnvironment[key] = value
+            case .runtime:
+                profile.extraEnvironment[key] = value
+            }
+        }
+    }
+
+    func canDelete(profileID: String) -> Bool {
+        settings.profiles.count > 1 && settings.profiles.contains(where: { $0.id == profileID })
+    }
+
+    private func updateProfile(id: String, mutate: (inout MenuSwitchProfile) -> Void) {
+        guard let index = settings.profiles.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        mutate(&settings.profiles[index])
     }
 
     private func applyProfile(_ profile: MenuSwitchProfile, saveSelection: Bool) throws {
@@ -230,17 +364,44 @@ final class MenuSwitchViewModel: ObservableObject {
         try claudeStore.apply(profile: profile, apiKey: apiKey)
 
         if !draftKey.isEmpty {
-            try KeychainVault.save(draftKey, account: profile.keychainAccount)
+            try? KeychainVault.save(draftKey, account: profile.keychainAccount)
             keyDrafts[profile.id] = ""
         }
 
         if saveSelection {
             settings.selectedProfileID = profile.id
-            try settingsStore.save(settings)
+            persistSettingsIfPossible()
         }
 
         statusText = "Applied \(profile.name) to Claude Code."
         lastErrorMessage = nil
+    }
+
+    private func persistSettingsIfPossible() {
+        do {
+            try settingsStore.save(settings)
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func environmentValue(profileID: String, key: String, scope: MenuSwitchEnvironmentScope) -> String {
+        guard let profile = settings.profiles.first(where: { $0.id == profileID }) else {
+            return ""
+        }
+
+        switch scope {
+        case .alias:
+            return profile.aliasEnvironment[key] ?? ""
+        case .runtime:
+            return profile.extraEnvironment[key] ?? ""
+        }
+    }
+
+    private func normalizeSortOrder() {
+        for index in settings.profiles.indices {
+            settings.profiles[index].sortOrder = (index + 1) * 10
+        }
     }
 }
 

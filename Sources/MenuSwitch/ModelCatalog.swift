@@ -18,11 +18,23 @@ struct MenuSwitchTemplate: Identifiable, Hashable {
 enum ModelTemplateCatalog {
     static let deepseekDocsURL = "https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code"
     static let kimiDocsURL = "https://platform.kimi.ai/docs/guide/agent-support.md"
-    static let minimaxDocsURL = "https://api.minimax.chat/docs"
-    static let qwenDocsURL = "https://qwenlm.github.io/"
-    static let glmDocsURL = "https://www.zhipuai.cn/"
+    static let minimaxDocsURL = "https://platform.minimaxi.com/docs/api-reference/api-overview"
 
     static let templates: [MenuSwitchTemplate] = [
+        MenuSwitchTemplate(
+            id: "anthropic-claude",
+            name: "Anthropic Claude",
+            provider: "Anthropic",
+            modelID: "",
+            endpoint: "",
+            notes: "Native Anthropic Claude via Claude Code's built-in configuration. Clears all third-party overrides.",
+            docsURL: "https://docs.anthropic.com/en/api/getting-started",
+            requiresEndpoint: false,
+            enabledByDefault: true,
+            sortOrder: 0,
+            aliasEnvironment: [:],
+            extraEnvironment: [:]
+        ),
         MenuSwitchTemplate(
             id: "deepseek-v4-pro",
             name: "DeepSeek V4 Pro",
@@ -88,17 +100,17 @@ enum ModelTemplateCatalog {
             id: "minimax-m2-7-token",
             name: "MiniMax M2.7 Token Plan",
             provider: "MiniMax",
-            modelID: "minimax-m2.7",
-            endpoint: "",
-            notes: "Token-plan slot for MiniMax M2.7 behind a compatible gateway.",
-            docsURL: minimaxDocsURL,
-            requiresEndpoint: true,
+            modelID: "MiniMax-M2.7",
+            endpoint: "https://api.minimaxi.com/anthropic",
+            notes: "Token-plan profile for MiniMax M2.7 with the Anthropic-compatible endpoint.",
+            docsURL: "https://platform.minimaxi.com/docs/token-plan/quickstart",
+            requiresEndpoint: false,
             enabledByDefault: false,
             sortOrder: 40,
             aliasEnvironment: [
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "minimax-m2.7",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "minimax-m2.7",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "minimax-m2.7"
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.7",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.7",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7"
             ],
             extraEnvironment: [:]
         ),
@@ -106,46 +118,18 @@ enum ModelTemplateCatalog {
             id: "minimax-m2-7-payg",
             name: "MiniMax M2.7 Pay-by-Use",
             provider: "MiniMax",
-            modelID: "minimax-m2.7",
-            endpoint: "",
-            notes: "Pay-by-use slot for MiniMax M2.7 through your preferred gateway or proxy.",
+            modelID: "MiniMax-M2.7",
+            endpoint: "https://api.minimaxi.com/anthropic",
+            notes: "Pay-by-use profile for MiniMax M2.7 with the same Anthropic-compatible endpoint.",
             docsURL: minimaxDocsURL,
-            requiresEndpoint: true,
+            requiresEndpoint: false,
             enabledByDefault: false,
             sortOrder: 50,
             aliasEnvironment: [
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "minimax-m2.7",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "minimax-m2.7",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "minimax-m2.7"
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.7",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.7",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7"
             ],
-            extraEnvironment: [:]
-        ),
-        MenuSwitchTemplate(
-            id: "qwen-3-6-plus",
-            name: "Qwen 3.6 Plus",
-            provider: "Qwen",
-            modelID: "qwen3.6-plus",
-            endpoint: "",
-            notes: "Current Qwen family model for gateway-backed Claude Code setups.",
-            docsURL: qwenDocsURL,
-            requiresEndpoint: true,
-            enabledByDefault: false,
-            sortOrder: 60,
-            aliasEnvironment: [:],
-            extraEnvironment: [:]
-        ),
-        MenuSwitchTemplate(
-            id: "glm-5-1",
-            name: "GLM 5.1",
-            provider: "Zhipu AI",
-            modelID: "glm-5.1",
-            endpoint: "",
-            notes: "Current GLM model for gateway-backed switching and full endpoint control.",
-            docsURL: glmDocsURL,
-            requiresEndpoint: true,
-            enabledByDefault: false,
-            sortOrder: 70,
-            aliasEnvironment: [:],
             extraEnvironment: [:]
         )
     ]

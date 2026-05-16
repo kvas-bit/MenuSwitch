@@ -70,15 +70,51 @@ struct ClaudeCodeSettingsStore {
 
         if !trimmedAPIKey.isEmpty {
             env["ANTHROPIC_AUTH_TOKEN"] = trimmedAPIKey
+            env["ANTHROPIC_API_KEY"] = trimmedAPIKey
         }
 
-        env["ANTHROPIC_MODEL"] = trimmedModel
-        profile.aliasEnvironment.forEach { env[$0.key] = $0.value }
-        profile.extraEnvironment.forEach { env[$0.key] = $0.value }
-
-        root["model"] = trimmedModel
+        if !trimmedModel.isEmpty {
+            env["ANTHROPIC_MODEL"] = trimmedModel
+            root["model"] = trimmedModel
+        } else {
+            root.removeValue(forKey: "model")
+        }
+        profile.aliasEnvironment.forEach { key, value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { env[key] = trimmed }
+        }
+        profile.extraEnvironment.forEach { key, value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { env[key] = trimmed }
+        }
         root["env"] = env
 
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: settingsFileURL, options: [.atomic])
+    }
+
+    func resetToClaudeDefaults() throws {
+        var root = try loadRootDictionary()
+        var env = root["env"] as? [String: Any] ?? [:]
+
+        let managedKeys = [
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            "CLAUDE_CODE_EFFORT_LEVEL",
+            "ENABLE_TOOL_SEARCH",
+            "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
+        ]
+        managedKeys.forEach { env.removeValue(forKey: $0) }
+        root.removeValue(forKey: "model")
+        root["env"] = env
+
+        try fileManager.createDirectory(at: settingsDirectoryURL, withIntermediateDirectories: true)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: settingsFileURL, options: [.atomic])
     }
@@ -97,6 +133,6 @@ struct ClaudeCodeSettingsStore {
         }
 
         let data = try Data(contentsOf: settingsFileURL)
-        return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 }
