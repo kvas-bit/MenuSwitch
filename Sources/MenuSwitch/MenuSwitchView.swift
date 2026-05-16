@@ -115,6 +115,12 @@ struct MenuSwitchView: View {
                     }
                 }
 
+                if viewModel.needsRestart {
+                    RestartBanner {
+                        viewModel.killAndRestart()
+                    }
+                }
+
                 RestoreDefaultsButton {
                     viewModel.resetClaudeCodeSettings()
                 }
@@ -688,6 +694,40 @@ private struct Badge: View {
             .padding(.horizontal, 10)
             .background(isProminent ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.08))
             .clipShape(Capsule())
+    }
+}
+
+private struct RestartBanner: View {
+    let onKill: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "arrow.clockwise.circle.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Restart Claude Code to activate")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Settings written. New sessions will use the selected model.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button("Kill Claude Code") {
+                onKill()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.blue.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.blue.opacity(0.28), lineWidth: 1)
+        )
     }
 }
 

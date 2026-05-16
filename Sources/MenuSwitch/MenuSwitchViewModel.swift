@@ -24,6 +24,7 @@ final class MenuSwitchViewModel: ObservableObject {
     @Published var lastErrorMessage: String?
     @Published var keyDrafts: [String: String] = [:]
     @Published var draggedProfileID: String?
+    @Published var needsRestart: Bool = false
 
     private let settingsStore: MenuSwitchSettingsStore
     private let claudeStore: ClaudeCodeSettingsStore
@@ -71,6 +72,12 @@ final class MenuSwitchViewModel: ObservableObject {
         currentProfile.map { "\($0.provider) · \($0.modelID)" } ?? "Open Settings to configure a profile."
     }
 
+    /// Returns the raw SF Symbol name for the current provider.
+    /// Use `makeCompositeStatusBarIcon()` to get the full branded menu bar image.
+    var currentStatusBarIconName: String {
+        statusBarSymbolName(for: currentProfile?.provider)
+    }
+
     var switcherEmptyState: Bool {
         enabledProfiles.isEmpty
     }
@@ -113,11 +120,74 @@ final class MenuSwitchViewModel: ObservableObject {
         }
     }
 
+    func killAndRestart() {
+        let task = Process()
+        task.launchPath = "/usr/bin/pgrep"
+        task.arguments = ["-x", "claude"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+            if task.terminationStatus == 0 {
+                // Claude Code is running — kill it
+                let killer = Process()
+                killer.launchPath = "/usr/bin/killall"
+                killer.arguments = ["-x", "claude"]
+                try? killer.run()
+                killer.waitUntilExit()
+            }
+        } catch {
+            // Claude Code not running, just launch
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.launchClaudeCode()
+            self?.needsRestart = false
+            self?.statusText = "Claude Code restarted with new model."
+        }
+    }
+
+    private func launchClaudeCode() {
+        let claudePath = "/usr/local/bin/claude"
+        let url = URL(fileURLWithPath: claudePath)
+
+        guard FileManager.default.isExecutableFile(atPath: claudePath) else {
+            statusText = "Claude Code not found at \(claudePath). Run `claude` manually."
+            return
+        }
+
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        config.addsToRecentItems = false
+
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+            if let error = error {
+                DispatchQueue.main.async {
+                    self.statusText = "Failed to relaunch: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func killClaudeCode() {
+        let task = Process()
+        task.launchPath = "/usr/bin/pkill"
+        task.arguments = ["-x", "claude"]
+        try? task.run()
+        task.waitUntilExit()
+        needsRestart = false
+        statusText = "Claude Code stopped. Run `claude` to start fresh."
+    }
+
     func resetClaudeCodeSettings() {
         do {
             try claudeStore.resetToClaudeDefaults()
-            statusText = "Restored Claude Code defaults."
+            statusText = "Restored defaults — restart Claude Code."
             lastErrorMessage = nil
+            needsRestart = true
         } catch {
             lastErrorMessage = error.localizedDescription
         }
@@ -373,8 +443,9 @@ final class MenuSwitchViewModel: ObservableObject {
             persistSettingsIfPossible()
         }
 
-        statusText = "Applied \(profile.name) to Claude Code."
+        statusText = "Applied \(profile.name) — restart Claude Code."
         lastErrorMessage = nil
+        needsRestart = true
     }
 
     private func persistSettingsIfPossible() {
