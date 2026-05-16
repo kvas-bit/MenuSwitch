@@ -383,6 +383,11 @@ final class MenuSwitchViewModel: ObservableObject {
             return
         }
 
+        if selectedPreset?.requiresGateway == true, baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lastErrorMessage = "This preset needs an Anthropic-compatible gateway URL before it can be applied."
+            return
+        }
+
         isApplying = true
         defer { isApplying = false }
 
