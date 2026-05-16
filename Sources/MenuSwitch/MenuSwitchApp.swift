@@ -14,8 +14,9 @@ struct MenuSwitchApp {
 
 @MainActor
 final class MenuSwitchAppDelegate: NSObject, NSApplicationDelegate {
-    private let settingsStore = ClaudeCodeSettingsStore()
-    private lazy var viewModel = MenuSwitchViewModel(store: settingsStore)
+    private let appSettingsStore = MenuSwitchSettingsStore()
+    private let claudeStore = ClaudeCodeSettingsStore()
+    private lazy var viewModel = MenuSwitchViewModel(settingsStore: appSettingsStore, claudeStore: claudeStore)
     private let popover = NSPopover()
     private var statusItem: NSStatusItem!
 
@@ -25,8 +26,8 @@ final class MenuSwitchAppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = NSHostingController(
             rootView: MenuSwitchView(
                 viewModel: viewModel,
-                onRevealSettings: { [weak self] in self?.settingsStore.revealSettingsFile() },
-                onRevealFolder: { [weak self] in self?.settingsStore.revealClaudeFolder() },
+                onRevealSettings: { [weak self] in self?.appSettingsStore.revealSettingsFile() },
+                onRevealFolder: { [weak self] in self?.claudeStore.revealClaudeFolder() },
                 onQuit: { NSApp.terminate(nil) }
             )
         )

@@ -1,233 +1,251 @@
 import Combine
 import Foundation
+import SwiftUI
 
-struct MenuSwitchChecklistRow: Identifiable {
-    let id: String
-    let title: String
-    let value: String
-    let isComplete: Bool
+enum MenuSwitchPage: String, CaseIterable, Identifiable {
+    case switcher = "Switch"
+    case settings = "Settings"
+
+    var id: String { rawValue }
 }
 
 @MainActor
 final class MenuSwitchViewModel: ObservableObject {
-    @Published var searchText: String = ""
-    @Published var selectedPresetID: String = ModelCatalog.customPreset.id
-    @Published var modelID: String = ""
-    @Published var baseURL: String = ""
-    @Published var apiKey: String = ""
-    @Published var statusText: String = "Choose a model, review the details, then apply it."
+    @Published var page: MenuSwitchPage = .switcher
+    @Published var settings: MenuSwitchAppSettings
+    @Published var statusText: String
     @Published var lastErrorMessage: String?
-    @Published var isApplying = false
-    @Published var isSavingKey = false
+    @Published var keyDrafts: [String: String] = [:]
 
-    private let store: ClaudeCodeSettingsStore
-    private var selectedPreset: ModelPreset = ModelCatalog.customPreset
+    private let settingsStore: MenuSwitchSettingsStore
+    private let claudeStore: ClaudeCodeSettingsStore
 
-    init(store: ClaudeCodeSettingsStore) {
-        self.store = store
-        refreshFromDisk()
-    }
+    init(settingsStore: MenuSwitchSettingsStore, claudeStore: ClaudeCodeSettingsStore) {
+        self.settingsStore = settingsStore
+        self.claudeStore = claudeStore
 
-    var currentPreset: ModelPreset {
-        selectedPreset
-    }
-
-    var currentConnectionSummary: String {
-        if selectedPreset.isCustom {
-            return "Custom endpoint"
+        var loadedSettings = (try? settingsStore.load()) ?? MenuSwitchAppSettings(
+            profiles: ModelTemplateCatalog.seedProfiles(),
+            selectedProfileID: ModelTemplateCatalog.seedProfiles().first(where: { $0.enabled })?.id
+        )
+        if loadedSettings.selectedProfileID == nil {
+            loadedSettings.selectedProfileID = loadedSettings.profiles.first(where: { $0.enabled })?.id
         }
-        return "\(selectedPreset.provider) · \(selectedPreset.displayName)"
+
+        self.settings = loadedSettings
+        self.statusText = loadedSettings.selectedProfileID == nil ? "Add or enable a model in Settings." : "Ready to switch models."
+        self.lastErrorMessage = nil
+        self.keyDrafts = [:]
     }
 
-    var currentConnectionDetail: String {
-        let endpoint = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if endpoint.isEmpty {
-            return "No custom endpoint set"
+    var enabledProfiles: [MenuSwitchProfile] {
+        settings.profiles
+            .filter(\.enabled)
+            .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    var configuredProfiles: [MenuSwitchProfile] {
+        settings.profiles.sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    var currentProfile: MenuSwitchProfile? {
+        if let selected = settings.selectedProfileID,
+           let match = settings.profiles.first(where: { $0.id == selected }) {
+            return match
         }
-        return endpoint
+        return enabledProfiles.first
     }
 
-    var savedKeyStatus: String {
-        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "No saved key loaded"
-        }
-        return "Key loaded for this preset"
+    var activeProfileLabel: String {
+        currentProfile?.name ?? "No enabled models"
     }
 
-    var docsURL: URL {
-        currentPreset.docsURL
+    var activeProfileSubtitle: String {
+        currentProfile.map { "\($0.provider) · \($0.modelID)" } ?? "Open Settings to configure a model."
     }
 
-    var presetSummary: String {
-        currentPreset.summary
+    var switcherEmptyState: Bool {
+        enabledProfiles.isEmpty
     }
 
-    var presetNotes: String {
-        currentPreset.notes
+    var settingsSummary: String {
+        "\(settings.profiles.count) configured models"
     }
 
-    var requiresGateway: Bool {
-        currentPreset.requiresGateway
-    }
-
-    var recommendedPresets: [ModelPreset] {
-        ModelCatalog.recommendedPresets(matching: searchText)
-    }
-
-    var sectionedPresets: [(ModelSection, [ModelPreset])] {
-        ModelCatalog.sectionedPresets(matching: searchText)
-    }
-
-    var customPreset: ModelPreset {
-        ModelCatalog.customPreset
-    }
-
-    var searchResultsEmpty: Bool {
-        ModelCatalog.filteredPresets(matching: searchText).isEmpty
-    }
-
-    var checklistRows: [MenuSwitchChecklistRow] {
-        [
-            MenuSwitchChecklistRow(
-                id: "model",
-                title: "Model",
-                value: modelID.isEmpty ? "Required" : modelID,
-                isComplete: !modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ),
-            MenuSwitchChecklistRow(
-                id: "endpoint",
-                title: "Endpoint",
-                value: baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (requiresGateway ? "Required for this preset" : "Optional") : baseURL,
-                isComplete: !requiresGateway || !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ),
-            MenuSwitchChecklistRow(
-                id: "key",
-                title: "API key",
-                value: savedKeyStatus,
-                isComplete: !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ),
-            MenuSwitchChecklistRow(
-                id: "docs",
-                title: "Docs",
-                value: currentPreset.docsURL.absoluteString,
-                isComplete: true
-            )
-        ]
-    }
-
-    func refreshFromDisk() {
-        do {
-            let configuration = try store.loadConfiguration()
-            if let preset = ModelCatalog.matchingPreset(for: configuration) {
-                loadPreset(preset)
-                statusText = "Loaded \(preset.displayName) from \(store.settingsFileURL.lastPathComponent)."
-            } else {
-                loadCustom(modelID: configuration.model ?? "", baseURL: configuration.baseURL ?? "")
-                statusText = "Loaded a custom Claude Code configuration."
-            }
-        } catch {
-            loadCustom(modelID: "", baseURL: "")
-            lastErrorMessage = error.localizedDescription
-            statusText = "Ready to configure Claude Code."
-        }
-    }
-
-    func loadPreset(_ preset: ModelPreset) {
-        selectedPreset = preset
-        selectedPresetID = preset.id
-        modelID = preset.modelID
-        baseURL = preset.baseURL ?? ""
+    func selectProfile(_ profile: MenuSwitchProfile) {
+        settings.selectedProfileID = profile.id
+        statusText = "Selected \(profile.name)."
         lastErrorMessage = nil
-        statusText = "Selected \(preset.displayName)."
-
-        apiKey = (try? KeychainVault.load(account: preset.keychainAccount)) ?? ""
     }
 
-    func loadCustom(modelID: String, baseURL: String) {
-        selectedPreset = ModelCatalog.customPreset
-        selectedPresetID = ModelCatalog.customPreset.id
-        self.modelID = modelID
-        self.baseURL = baseURL
-        lastErrorMessage = nil
-        statusText = "Custom endpoint loaded."
-
-        apiKey = (try? KeychainVault.load(account: ModelCatalog.customPreset.keychainAccount)) ?? ""
-    }
-
-    func selectPreset(_ preset: ModelPreset) {
-        if preset.isCustom {
-            loadCustom(modelID: modelID, baseURL: baseURL)
-        } else {
-            loadPreset(preset)
-        }
-    }
-
-    func saveKey() {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty else {
-            lastErrorMessage = "Enter an API key first."
-            return
-        }
-
+    func apply(profile: MenuSwitchProfile) {
         do {
-            isSavingKey = true
-            defer { isSavingKey = false }
-            try KeychainVault.save(trimmedKey, account: selectedPreset.keychainAccount)
-            statusText = "Saved the key for \(selectedPreset.displayName)."
-            lastErrorMessage = nil
-        } catch {
-            lastErrorMessage = error.localizedDescription
-        }
-    }
-
-    func clearSavedKey() {
-        do {
-            try KeychainVault.delete(account: selectedPreset.keychainAccount)
-            apiKey = ""
-            statusText = "Saved key cleared."
-            lastErrorMessage = nil
-        } catch {
-            lastErrorMessage = error.localizedDescription
-        }
-    }
-
-    func applySelection() {
-        let trimmedModel = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !trimmedModel.isEmpty else {
-            lastErrorMessage = "Model ID is required."
-            return
-        }
-
-        if currentPreset.requiresGateway && trimmedBaseURL.isEmpty {
-            lastErrorMessage = "This preset needs an endpoint or gateway URL."
-            return
-        }
-
-        isApplying = true
-        defer { isApplying = false }
-
-        do {
-            try store.apply(
-                preset: currentPreset,
-                modelID: trimmedModel,
-                baseURL: trimmedBaseURL,
-                apiKey: trimmedKey
-            )
-
-            if trimmedKey.isEmpty {
-                try KeychainVault.delete(account: currentPreset.keychainAccount)
-            } else {
-                try KeychainVault.save(trimmedKey, account: currentPreset.keychainAccount)
-            }
-
-            statusText = "Applied \(trimmedModel) to Claude Code."
-            lastErrorMessage = nil
+            try applyProfile(profile, saveSelection: true)
         } catch {
             lastErrorMessage = error.localizedDescription
             statusText = "Could not update Claude Code."
         }
     }
+
+    func applySelectedProfile() {
+        guard let profile = currentProfile else {
+            lastErrorMessage = "Enable or configure a model first."
+            return
+        }
+        apply(profile: profile)
+    }
+
+    func saveSettings() {
+        do {
+            try settingsStore.save(settings)
+            statusText = "Settings saved."
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    func restoreDefaults() {
+        do {
+            settings = try settingsStore.resetToDefaults()
+            keyDrafts.removeAll()
+            statusText = "Restored default provider models."
+            lastErrorMessage = nil
+            if settings.selectedProfileID == nil {
+                settings.selectedProfileID = enabledProfiles.first?.id
+            }
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    func addCustomProfile() {
+        let newProfile = MenuSwitchProfile(
+            id: UUID().uuidString,
+            name: "Custom Model",
+            provider: "Custom",
+            modelID: "",
+            endpoint: "",
+            notes: "Paste any Anthropic-compatible model and endpoint here.",
+            docsURL: ModelTemplateCatalog.qwenDocsURL,
+            enabled: true,
+            requiresEndpoint: true,
+            templateID: nil,
+            sortOrder: (settings.profiles.map(\.sortOrder).max() ?? 0) + 10,
+            aliasEnvironment: [:],
+            extraEnvironment: [:]
+        )
+        settings.profiles.append(newProfile)
+        settings.selectedProfileID = newProfile.id
+        statusText = "Added a custom model."
+    }
+
+    func removeProfile(id: String) {
+        guard settings.profiles.count > 1 else {
+            lastErrorMessage = "Keep at least one profile configured."
+            return
+        }
+
+        if let removed = settings.profiles.first(where: { $0.id == id }) {
+            try? KeychainVault.delete(account: removed.keychainAccount)
+        }
+        settings.profiles.removeAll { $0.id == id }
+        keyDrafts[id] = nil
+
+        if settings.selectedProfileID == id {
+            settings.selectedProfileID = enabledProfiles.first?.id ?? settings.profiles.first?.id
+        }
+
+        statusText = "Removed a profile."
+    }
+
+    func saveKey(for profileID: String, key: String) {
+        let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else {
+            lastErrorMessage = "Enter an API key first."
+            return
+        }
+
+        guard let profile = settings.profiles.first(where: { $0.id == profileID }) else {
+            lastErrorMessage = "Profile not found."
+            return
+        }
+
+        do {
+            try KeychainVault.save(trimmedKey, account: profile.keychainAccount)
+            keyDrafts[profileID] = ""
+            statusText = "Saved the key for \(profile.name)."
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    func clearKey(for profileID: String) {
+        guard let profile = settings.profiles.first(where: { $0.id == profileID }) else {
+            lastErrorMessage = "Profile not found."
+            return
+        }
+
+        do {
+            try KeychainVault.delete(account: profile.keychainAccount)
+            keyDrafts[profileID] = ""
+            statusText = "Cleared the saved key for \(profile.name)."
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    func hasStoredKey(for profileID: String) -> Bool {
+        guard let profile = settings.profiles.first(where: { $0.id == profileID }) else {
+            return false
+        }
+        return (try? KeychainVault.load(account: profile.keychainAccount)) != nil
+    }
+
+    func keyBinding(for profileID: String) -> Binding<String> {
+        Binding(
+            get: { [weak self] in
+                self?.keyDrafts[profileID, default: ""] ?? ""
+            },
+            set: { [weak self] newValue in
+                self?.keyDrafts[profileID] = newValue
+            }
+        )
+    }
+
+    func storedKeyStatus(for profileID: String) -> String {
+        hasStoredKey(for: profileID) ? "Saved in Keychain" : "No saved key"
+    }
+
+    private func applyProfile(_ profile: MenuSwitchProfile, saveSelection: Bool) throws {
+        let draftKey = keyDrafts[profile.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey = draftKey.isEmpty ? ((try? KeychainVault.load(account: profile.keychainAccount)) ?? "") : draftKey
+
+        if profile.requiresEndpoint && profile.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw SimpleError(message: "This profile needs an endpoint or gateway URL.")
+        }
+
+        try claudeStore.apply(profile: profile, apiKey: apiKey)
+
+        if !draftKey.isEmpty {
+            try KeychainVault.save(draftKey, account: profile.keychainAccount)
+            keyDrafts[profile.id] = ""
+        }
+
+        if saveSelection {
+            settings.selectedProfileID = profile.id
+            try settingsStore.save(settings)
+        }
+
+        statusText = "Applied \(profile.name) to Claude Code."
+        lastErrorMessage = nil
+    }
+}
+
+private struct SimpleError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
 }

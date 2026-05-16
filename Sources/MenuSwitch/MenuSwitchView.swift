@@ -9,28 +9,29 @@ struct MenuSwitchView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            topBar
             Divider()
-            HStack(spacing: 0) {
-                sidebar
-                    .frame(width: 334)
-                Divider()
-                detailPane
+
+            switch viewModel.page {
+            case .switcher:
+                switcherPage
+            case .settings:
+                settingsPage
             }
         }
         .frame(width: 980, height: 760)
         .background(Color(nsColor: .windowBackgroundColor))
-        .animation(.snappy(duration: 0.2), value: viewModel.selectedPresetID)
-        .animation(.snappy(duration: 0.2), value: viewModel.searchText)
+        .animation(.snappy(duration: 0.2), value: viewModel.page)
+        .animation(.snappy(duration: 0.2), value: viewModel.settings.profiles.count)
     }
 
-    private var header: some View {
+    private var topBar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("MenuSwitch")
                         .font(.system(size: 22, weight: .semibold))
-                    Text("Switch Claude Code models without editing settings by hand.")
+                    Text("Choose a configured model, or edit the full profile settings below.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -38,19 +39,29 @@ struct MenuSwitchView: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(viewModel.currentConnectionSummary)
-                        .font(.system(size: 12, weight: .semibold))
                     Text(viewModel.statusText)
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(viewModel.activeProfileSubtitle)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
             }
 
-            HStack(spacing: 10) {
-                SearchField(text: $viewModel.searchText, placeholder: "Search models, providers, or notes")
-                    .frame(maxWidth: .infinity)
+            HStack(spacing: 12) {
+                Picker("", selection: $viewModel.page) {
+                    ForEach(MenuSwitchPage.allCases) { page in
+                        Text(page.rawValue).tag(page)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
 
-                Button("Open settings") { onRevealSettings() }
+                Spacer()
+
+                Button("Open settings") {
+                    viewModel.page = .settings
+                }
+                Button("Reveal settings file") { onRevealSettings() }
                 Button("Open folder") { onRevealFolder() }
                 Button("Quit") { onQuit() }
             }
@@ -58,288 +69,335 @@ struct MenuSwitchView: View {
         .padding(20)
     }
 
-    private var sidebar: some View {
+    private var switcherPage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                SectionHeader(title: "Recommended", subtitle: "Latest models to reach for first")
+                summaryCard
 
-                LazyVStack(spacing: 8) {
-                    ForEach(viewModel.recommendedPresets) { preset in
-                        PresetRow(preset: preset, isSelected: viewModel.selectedPresetID == preset.id) {
-                            viewModel.selectPreset(preset)
-                        }
-                    }
-                }
-
-                if !viewModel.sectionedPresets.isEmpty {
-                    ForEach(viewModel.sectionedPresets, id: \.0) { section, presets in
-                        VStack(alignment: .leading, spacing: 8) {
-                            SectionHeader(title: section.rawValue, subtitle: sectionSubtitle(for: section))
-                            LazyVStack(spacing: 8) {
-                                ForEach(presets) { preset in
-                                    PresetRow(preset: preset, isSelected: viewModel.selectedPresetID == preset.id) {
-                                        viewModel.selectPreset(preset)
-                                    }
-                                }
+                if viewModel.switcherEmptyState {
+                    EmptyState(
+                        title: "No enabled models",
+                        message: "Open Settings and enable at least one profile to make the switch page useful."
+                    )
+                } else {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                        ForEach(viewModel.enabledProfiles) { profile in
+                            SwitchCard(profile: profile, isActive: viewModel.currentProfile?.id == profile.id) {
+                                viewModel.apply(profile: profile)
+                            } onSelect: {
+                                viewModel.selectProfile(profile)
                             }
                         }
                     }
                 }
-
-                SectionHeader(title: "Custom", subtitle: "Any Anthropic-compatible endpoint")
-                PresetRow(
-                    preset: viewModel.customPreset,
-                    isSelected: viewModel.selectedPresetID == viewModel.customPreset.id
-                ) {
-                    viewModel.selectPreset(viewModel.customPreset)
-                }
-
-                if viewModel.searchResultsEmpty {
-                    EmptySearchState()
-                        .padding(.top, 8)
-                }
-            }
-            .padding(16)
-        }
-        .background(Color(nsColor: .controlBackgroundColor))
-    }
-
-    private var detailPane: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                presetHero
-                configurationCard
-                checklistCard
-                actionsCard
-                errorCard
             }
             .padding(18)
         }
     }
 
-    private var presetHero: some View {
+    private var summaryCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(viewModel.currentPreset.displayName)
-                        .font(.system(size: 24, weight: .semibold))
-                    Text(viewModel.presetSummary)
-                        .font(.system(size: 13))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(viewModel.activeProfileLabel)
+                        .font(.system(size: 18, weight: .semibold))
+                    Text(viewModel.settingsSummary)
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Badge(text: "Claude models hidden", isProminent: true)
+            }
+
+            Text("The switch page only shows profiles you configured in Settings.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private var settingsPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                settingsHeader
+
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach($viewModel.settings.profiles) { $profile in
+                        ProfileEditorCard(
+                            profile: $profile,
+                            keyDraft: viewModel.keyBinding(for: profile.id),
+                            storedKeyStatus: viewModel.storedKeyStatus(for: profile.id),
+                            onSaveKey: {
+                                viewModel.saveKey(for: profile.id, key: viewModel.keyDrafts[profile.id, default: ""])
+                            },
+                            onClearKey: {
+                                viewModel.clearKey(for: profile.id)
+                            },
+                            onApply: {
+                                viewModel.apply(profile: profile)
+                            },
+                            onDelete: {
+                                viewModel.removeProfile(id: profile.id)
+                            }
+                        )
+                    }
+                }
+            }
+            .padding(18)
+        }
+    }
+
+    private var settingsHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Settings")
+                        .font(.system(size: 18, weight: .semibold))
+                    Text("Edit the model name, endpoint, notes, and Keychain-backed API key for each profile.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Badge(text: "Form-based editor", isProminent: true)
+            }
+
+            HStack(spacing: 8) {
+                Button("Add custom model") {
+                    viewModel.addCustomProfile()
+                }
+                Button("Restore defaults") {
+                    viewModel.restoreDefaults()
+                }
+                Button("Save settings") {
+                    viewModel.saveSettings()
+                }
+
+                Spacer()
+
+                Text("Claude models are hidden because Claude Code already provides them.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+private struct SwitchCard: View {
+    let profile: MenuSwitchProfile
+    let isActive: Bool
+    let onSwitch: () -> Void
+    let onSelect: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(profile.name)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(profile.provider)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Badge(text: profile.requiresEndpoint ? "Gateway" : "Direct", isProminent: profile.enabled)
+            }
+
+            Text(profile.modelID)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Text(profile.notes)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+
+            HStack(spacing: 8) {
+                Button("Select") {
+                    onSelect()
+                }
+
+                Button("Switch now") {
+                    onSwitch()
+                }
+                .keyboardShortcut(.defaultAction)
+
+                Spacer()
+
+                if isActive {
+                    Badge(text: "Active", isProminent: true)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isActive ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(isActive ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+}
+
+private struct ProfileEditorCard: View {
+    @Binding var profile: MenuSwitchProfile
+    let keyDraft: Binding<String>
+    let storedKeyStatus: String
+    let onSaveKey: () -> Void
+    let onClearKey: () -> Void
+    let onApply: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                HStack(spacing: 12) {
+                    LabeledField(label: "Display name", helpText: "Shown on the switch page.", text: $profile.name, placeholder: "DeepSeek V4 Pro")
+                    LabeledField(label: "Provider", helpText: "Shown beside the model name.", text: $profile.provider, placeholder: "DeepSeek")
                 }
 
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 6) {
-                    Badge(text: viewModel.currentPreset.provider, isProminent: true)
-                    Badge(text: viewModel.currentPreset.badgeText, isProminent: viewModel.currentPreset.isLatest)
+                    Toggle(isOn: $profile.enabled) {
+                        Text("Enabled")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .toggleStyle(.switch)
+
+                    Badge(text: profile.requiresEndpoint ? "Gateway" : "Direct", isProminent: profile.enabled)
                 }
             }
-
-            Text(viewModel.presetNotes)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 8) {
-                StatusPill(label: "Model", value: viewModel.modelID.isEmpty ? "Set a model" : viewModel.modelID)
-                StatusPill(label: "Endpoint", value: viewModel.currentConnectionDetail)
-                StatusPill(label: "Key", value: viewModel.savedKeyStatus)
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-
-    private var configurationCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "Configuration", subtitle: "Edit before applying if you need a custom endpoint")
-
-            VStack(alignment: .leading, spacing: 12) {
-                LabeledField(
-                    label: "Model ID",
-                    helpText: "Use the exact model name Claude Code should switch to.",
-                    text: $viewModel.modelID,
-                    placeholder: "claude-sonnet-4-6"
-                )
-
-                LabeledField(
-                    label: "Endpoint or gateway URL",
-                    helpText: viewModel.currentPreset.requiresGateway ? "Required for gateway-backed presets." : "Leave blank for direct Claude models.",
-                    text: $viewModel.baseURL,
-                    placeholder: "https://your-gateway.example.com/anthropic"
-                )
-
-                LabeledSecureField(
-                    label: "API key or bearer token",
-                    helpText: "Saved in Keychain so you do not need to retype it every time.",
-                    text: $viewModel.apiKey,
-                    placeholder: "Paste once, then save"
-                )
-            }
-
-            HStack(spacing: 8) {
-                Button(viewModel.isSavingKey ? "Saving..." : "Save Key") {
-                    viewModel.saveKey()
-                }
-                .disabled(viewModel.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSavingKey)
-
-                Button("Clear Saved Key") {
-                    viewModel.clearSavedKey()
-                }
-                .disabled(viewModel.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                Spacer()
-
-                Text(viewModel.docsURL.absoluteString)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-
-    private var checklistCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "What this preset writes", subtitle: "Quick confirmation before you apply")
 
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(viewModel.checklistRows) { row in
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: row.isComplete ? "checkmark.circle.fill" : "circle.dashed")
-                            .foregroundStyle(row.isComplete ? .green : .orange)
-                            .padding(.top, 1)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.title)
-                                .font(.system(size: 12, weight: .semibold))
-                            Text(row.value)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        Spacer()
-                    }
-                    .padding(.vertical, 4)
-                }
+                LabeledField(label: "Model ID", helpText: "This is the exact model string Claude Code will use.", text: $profile.modelID, placeholder: "qwen3.6-plus")
+                LabeledField(label: "Endpoint or gateway URL", helpText: profile.requiresEndpoint ? "Required for this profile." : "Optional for direct endpoints.", text: $profile.endpoint, placeholder: "https://your-gateway.example.com/anthropic")
+                LabeledField(label: "Docs URL", helpText: "Used for the help link on this card.", text: $profile.docsURL, placeholder: "https://example.com/docs")
+                LabeledTextEditor(label: "Notes", helpText: "Short setup notes for this profile.", text: $profile.notes)
             }
 
-            Text("Claude Code will update `~/.claude/settings.json` and keep your saved key in Keychain.")
-                .font(.system(size: 11))
+            HStack(spacing: 8) {
+                SecureInput(label: "API key", helpText: storedKeyStatus, text: keyDraft, placeholder: "Paste a key to save it in Keychain")
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Button("Save Key") {
+                        onSaveKey()
+                    }
+                    Button("Clear Key") {
+                        onClearKey()
+                    }
+                    Button("Apply Now") {
+                        onApply()
+                    }
+                    Button("Delete") {
+                        onDelete()
+                    }
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+private struct LabeledField: View {
+    let label: String
+    let helpText: String
+    @Binding var text: String
+    let placeholder: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-
-    private var actionsCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "Actions", subtitle: "Apply the selected preset or open the Claude files directly")
-
-            HStack(spacing: 10) {
-                Button {
-                    viewModel.applySelection()
-                } label: {
-                    if viewModel.isApplying {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .frame(width: 18, height: 18)
-                    } else {
-                        Text("Apply selected model")
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-
-                Button("Reveal settings file") { onRevealSettings() }
-                Button("Open Claude folder") { onRevealFolder() }
-
-                Spacer()
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-
-    private var errorCard: some View {
-        Group {
-            if let error = viewModel.lastErrorMessage {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text(error)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color.orange.opacity(0.08))
-                )
-            }
-        }
-    }
-
-    private func sectionSubtitle(for section: ModelSection) -> String {
-        switch section {
-        case .featured:
-            return "Current best picks"
-        case .official:
-            return "Direct provider models"
-        case .community:
-            return "Gateway-backed community models"
-        case .custom:
-            return "Manual endpoint"
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: .infinity)
+            Text(helpText)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
-private struct SectionHeader: View {
-    let title: String
-    let subtitle: String
+private struct LabeledTextEditor: View {
+    let label: String
+    let helpText: String
+    @Binding var text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .textCase(.uppercase)
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
-            Text(subtitle)
-                .font(.system(size: 11))
+            TextEditor(text: $text)
+                .frame(minHeight: 86)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
+                )
+            Text(helpText)
+                .font(.system(size: 10))
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+private struct SecureInput: View {
+    let label: String
+    let helpText: String
+    @Binding var text: String
+    let placeholder: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            SecureField(placeholder, text: $text)
+                .textFieldStyle(.roundedBorder)
+            Text(helpText)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -358,158 +416,22 @@ private struct Badge: View {
     }
 }
 
-private struct StatusPill: View {
-    let label: String
-    let value: String
+private struct EmptyState: View {
+    let title: String
+    let message: String
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-            Text(value)
-                .font(.system(size: 11))
-                .lineLimit(1)
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-private struct SearchField: View {
-    @Binding var text: String
-    let placeholder: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.plain)
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 12)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-private struct LabeledField: View {
-    let label: String
-    let helpText: String
-    @Binding var text: String
-    let placeholder: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.roundedBorder)
-            Text(helpText)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-private struct LabeledSecureField: View {
-    let label: String
-    let helpText: String
-    @Binding var text: String
-    let placeholder: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            SecureField(placeholder, text: $text)
-                .textFieldStyle(.roundedBorder)
-            Text(helpText)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-private struct PresetRow: View {
-    let preset: ModelPreset
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .center, spacing: 8) {
-                        Text(preset.displayName)
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .multilineTextAlignment(.leading)
-
-                        Spacer(minLength: 0)
-
-                        Text(preset.badgeText)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 4)
-                            .padding(.horizontal, 8)
-                            .background(Color.secondary.opacity(0.08))
-                            .clipShape(Capsule())
-                    }
-
-                    Text(preset.provider)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-
-                    Text(preset.summary)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(isSelected ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.05))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.06), lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-        .buttonStyle(MenuSwitchRowButtonStyle())
-    }
-}
-
-private struct EmptySearchState: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("No matching models")
-                .font(.system(size: 12, weight: .semibold))
-            Text("Clear the search field to see the full catalog, or try a provider name like DeepSeek, Kimi, or Qwen.")
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+            Text(message)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-}
-
-private struct MenuSwitchRowButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.985 : 1)
-            .animation(.spring(response: 0.22, dampingFraction: 0.82), value: configuration.isPressed)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }

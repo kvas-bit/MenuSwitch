@@ -39,7 +39,7 @@ struct ClaudeCodeSettingsStore {
         return ClaudeCodeConfiguration(model: model, baseURL: baseURL, hasAuthToken: hasAuthToken)
     }
 
-    func apply(preset: ModelPreset, modelID: String, baseURL: String, apiKey: String) throws {
+    func apply(profile: MenuSwitchProfile, apiKey: String) throws {
         try fileManager.createDirectory(at: settingsDirectoryURL, withIntermediateDirectories: true)
 
         var root = try loadRootDictionary()
@@ -60,8 +60,8 @@ struct ClaudeCodeSettingsStore {
         ]
         managedKeys.forEach { env.removeValue(forKey: $0) }
 
-        let trimmedModel = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModel = profile.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBaseURL = profile.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if !trimmedBaseURL.isEmpty {
@@ -73,8 +73,8 @@ struct ClaudeCodeSettingsStore {
         }
 
         env["ANTHROPIC_MODEL"] = trimmedModel
-        preset.aliasEnvironment.forEach { env[$0.key] = $0.value }
-        preset.extraEnvironment.forEach { env[$0.key] = $0.value }
+        profile.aliasEnvironment.forEach { env[$0.key] = $0.value }
+        profile.extraEnvironment.forEach { env[$0.key] = $0.value }
 
         root["model"] = trimmedModel
         root["env"] = env
