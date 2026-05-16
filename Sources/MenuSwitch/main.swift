@@ -669,11 +669,17 @@ struct ClaudeCodeConfiguration {
 }
 
 struct ClaudeCodeSettingsStore {
-    private let fileManager = FileManager.default
+    private let fileManager: FileManager
+    private let homeDirectory: URL
     let customKeychainAccount = "menu-switch-custom"
 
+    init(fileManager: FileManager = .default, homeDirectory: URL? = nil) {
+        self.fileManager = fileManager
+        self.homeDirectory = homeDirectory ?? fileManager.homeDirectoryForCurrentUser
+    }
+
     var settingsDirectoryURL: URL {
-        fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
+        homeDirectory.appendingPathComponent(".claude", isDirectory: true)
     }
 
     var settingsFileURL: URL {

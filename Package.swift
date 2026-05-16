@@ -18,6 +18,11 @@ let package = Package(
             name: "MenuSwitch",
             dependencies: [],
             path: "Sources/MenuSwitch"
+        ),
+        .testTarget(
+            name: "MenuSwitchTests",
+            dependencies: ["MenuSwitch"],
+            path: "Tests/MenuSwitchTests"
         )
     ]
 )
